@@ -1,64 +1,173 @@
-import { cases, actionLabels, actionStatuses, reasons } from './data.js';
+import { invoices, documentTypes, reasons } from './data.js';
 
-const KEY='abi-sap-demo-v1';
-const main=document.querySelector('#main');
-const dialog=document.querySelector('#dialog');
-const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const money=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(value);
-const time=value=>new Date(value).toLocaleString('en-US',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-let storageError='';
-function readState(){try{const raw=localStorage.getItem(KEY);if(!raw)return {records:[]};const data=JSON.parse(raw);if(!Array.isArray(data.records))throw Error();return data;}catch{storageError='Saved demo data could not be read. Use Demo Guide to export or reset the browser data before saving.';return {records:[]};}}
-let state=readState();
-let view='worklist',selected=null,query='',statusFilter='all',issueFilter='all',draft=null;
-const getRecord=id=>state.records.find(r=>r.caseId===id);
-const tag=(label,kind='neutral')=>`<span class="tag ${kind}">${esc(label)}</span>`;
-const options=(values,current)=>values.map(v=>`<option value="${esc(v)}" ${v===current?'selected':''}>${esc(v)}</option>`).join('');
-function notify(message){const toast=document.querySelector('#toast');toast.textContent=message;toast.hidden=false;clearTimeout(notify.timer);notify.timer=setTimeout(()=>toast.hidden=true,5500);}
-function navigate(next,id){view=next;selected=id||null;draft=null;const url=new URL(location.href);if(id)url.searchParams.set('case',id);else url.searchParams.delete('case');url.hash=next==='detail'?'worklist':next;history.replaceState({},'',url);render();window.scrollTo(0,0);}
-function render(){document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===(view==='detail'?'worklist':view)));if(view==='detail')renderDetail();else if(view==='documents')renderDocuments();else if(view==='audit')renderAudit();else if(view==='guide')renderGuide();else renderWorklist();}
-function renderWorklist(){
-  const open=cases.filter(c=>!getRecord(c.id)),credit=state.records.filter(r=>r.action==='credit').reduce((sum,r)=>sum+r.amount,0);
-  main.innerHTML=`<div class="breadcrumb">Home / Sales / Customer Operations</div><div class="heading"><div><div class="eyebrow">Sales & distribution</div><h1>Customer Resolution Workbench</h1><p>Record customer agreements and create the follow-on sales documents.</p></div><div class="actions"><button id="refresh">↻ Refresh</button></div></div>
-  ${storageError?`<div role="alert" class="error">${esc(storageError)}</div>`:''}
-  <div class="metrics"><div class="metric"><div class="metric-label">Awaiting SAP entry</div><div class="metric-value">${open.length}</div><div class="metric-note">Customer agreement captured</div></div><div class="metric"><div class="metric-label">High priority</div><div class="metric-value amber">${open.filter(c=>c.priority==='High').length}</div><div class="metric-note">Delivery exceptions</div></div><div class="metric"><div class="metric-label">Resolutions recorded</div><div class="metric-value green">${state.records.length}</div><div class="metric-note">Saved in this browser</div></div><div class="metric"><div class="metric-label">Credit requests</div><div class="metric-value">${money(credit)}</div><div class="metric-note">Pending release · USD</div></div></div>
-  <section class="panel"><div class="panel-title"><h2>Customer cases <span class="badge-count">(${cases.length})</span></h2><small>Sales organization US01</small></div><div class="filters"><label>Search<input id="search" type="search" placeholder="Case, customer, order or handoff reference" value="${esc(query)}"></label><label>Entry status<select id="status-filter"><option value="all">All statuses</option><option value="open" ${statusFilter==='open'?'selected':''}>Awaiting entry</option><option value="done" ${statusFilter==='done'?'selected':''}>Recorded</option></select></label><label>Issue category<select id="issue-filter"><option value="all">All categories</option>${options([...new Set(cases.map(c=>c.issue))],issueFilter)}</select></label></div><div class="table-wrap"><table><thead><tr><th>Case / priority</th><th>Sold-to party</th><th>Issue category</th><th>Reference invoice</th><th>Agreed action</th><th>Entry status</th><th></th></tr></thead><tbody id="cases-body"></tbody></table></div><div class="table-bottom" id="case-count"></div></section>`;
-  document.querySelector('#refresh').onclick=()=>{state=readState();renderWorklist();notify('Worklist refreshed');};
-  document.querySelector('#search').oninput=e=>{query=e.target.value;renderCaseRows();};
-  document.querySelector('#status-filter').onchange=e=>{statusFilter=e.target.value;renderCaseRows();};
-  document.querySelector('#issue-filter').onchange=e=>{issueFilter=e.target.value;renderCaseRows();};renderCaseRows();
+const STORAGE_KEY = 'abi-sap-transactions-v2';
+const main = document.querySelector('#main');
+const dialog = document.querySelector('#dialog');
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const formatAmount = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const today = () => new Date().toLocaleDateString('en-CA');
+let draft = createDraft();
+let activeTab = 'items';
+let displayed = null;
+let saving = false;
+let dirty = false;
+
+function createDraft(action = 'credit') {
+  return { action, invoice:'', account:'', customer:'', city:'', order:'', delivery:'', po:'', material:'', product:'', invoiceQuantity:0, reference:'', reason:'', quantity:'', unitPrice:'', summary:'', createdBy:'', documentDate:today() };
 }
-function renderCaseRows(){const visible=cases.filter(c=>{const r=getRecord(c.id);return (statusFilter==='all'||(statusFilter==='done'?!!r:!r))&&(issueFilter==='all'||c.issue===issueFilter)&&[c.id,c.customer,c.account,c.order,c.invoice,c.reference,r?.reference].join(' ').toLowerCase().includes(query.toLowerCase());});
-  document.querySelector('#cases-body').innerHTML=visible.map(c=>`<tr><td><button class="link-button" data-case="${c.id}">${c.id}</button><div class="sub ${c.priority==='High'?'priority':''}">${c.priority==='High'?'◆ ':''}${c.priority} priority</div></td><td>${esc(c.customer)}<div class="sub">${c.account} · ${c.city}</div></td><td>${c.issue}</td><td>${c.invoice}<div class="sub">Order ${c.order}</div></td><td>${actionLabels[c.action]}</td><td>${getRecord(c.id)?tag('Recorded','success'):tag('Awaiting entry','warning')}</td><td><button data-case="${c.id}" aria-label="Open ${c.id}">Open →</button></td></tr>`).join('')||'<tr><td colspan="7" class="empty">No cases match your filters.</td></tr>';
-  document.querySelector('#case-count').textContent=`${visible.length} of ${cases.length} cases · All customer and document data is fictional`;
-  document.querySelectorAll('[data-case]').forEach(b=>b.onclick=()=>navigate('detail',b.dataset.case));
+function getRecords() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return [];
+  const data = JSON.parse(raw);
+  if (!Array.isArray(data) || data.some(r => typeof r.documentId !== 'string' || !documentTypes[r.action])) throw new Error('Saved document data could not be read. Contact the system administrator.');
+  return data;
 }
-function field(label,id,value,{readonly=false,type='text',required=true,min='',max='',step=''}={}){return `<label>${label}${required&&!readonly?' *':''}<input id="${id}" name="${id}" type="${type}" value="${esc(value)}" ${readonly?'readonly':''} ${required?'required':''} ${min!==''?`min="${min}"`:''} ${max!==''?`max="${max}"`:''} ${step?`step="${step}"`:''} maxlength="180"></label>`;}
-function renderDetail(){const c=cases.find(c=>c.id===selected);if(!c){navigate('worklist');notify('Case not found');return;}const record=getRecord(c.id);
-  main.innerHTML=`<div class="breadcrumb"><button id="back">Customer Resolution Workbench</button> / ${c.id}</div><section class="detail-banner"><div class="eyebrow">Customer case · ${c.id}</div><div class="heading" style="margin-bottom:0"><div><h1>${esc(c.customer)}</h1>${tag(c.issue)} ${record?tag('Recorded','success'):tag('Awaiting SAP entry','warning')}</div><div class="actions">${tag(c.priority+' priority',c.priority==='High'?'warning':'neutral')}</div></div><div class="facts">${[['Sold-to party',c.account],['Ship-to location',c.city],['Sales organization','US01 · United States'],['Distribution channel','10 · Wholesale'],['Division','01 · Beer'],['Customer contact',c.contact]].map(([k,v])=>`<div class="fact"><span>${k}</span><strong>${esc(v)}</strong></div>`).join('')}</div></section>
-  <div class="detail-layout"><div>${record?renderReceipt(c,record):renderForm(c)}<section class="panel"><div class="panel-title"><h2>Document flow</h2><small>Reference documents</small></div><div class="flow"><div class="flow-node"><span>Sales order</span>${c.order}</div><span class="flow-arrow">→</span><div class="flow-node"><span>Outbound delivery</span>${c.delivery}</div><span class="flow-arrow">→</span><div class="flow-node"><span>Billing document</span>${c.invoice}</div>${record?`<span class="flow-arrow">→</span><div class="flow-node"><span>${actionLabels[record.action]}</span>${record.documentId}</div>`:''}</div></section></div>
-  <aside class="detail-aside"><section class="panel"><div class="panel-title"><h2>Customer agreement</h2></div><div class="aside-content"><span class="label-text" style="margin-top:0">CUSTOMER REPORTED</span><div class="quote">“${esc(c.quote)}”</div><span class="label-text">REPRESENTATIVE AGREEMENT</span><p>${esc(c.agreement)}</p><span class="label-text">HANDOFF REFERENCE</span><strong>${c.reference}</strong><span class="label-text">SOURCE</span>Omni · Demonstration conversation</div></section><section class="panel"><div class="panel-title"><h2>Case history</h2></div><div class="aside-content"><ol class="timeline">${record?`<li><strong>Resolution recorded</strong><small>${time(record.savedAt)}</small>${actionLabels[record.action]} ${record.documentId}<br>${esc(record.resolvedBy)}</li>`:''}<li><strong>Agreement captured</strong><small>${time(c.created)}</small>Ready for back-office entry.</li><li><strong>Customer issue received</strong><small>${c.issue}</small>Reference invoice ${c.invoice}</li></ol></div></section></aside></div>`;
-  document.querySelector('#back').onclick=()=>navigate('worklist');
-  if(!record){document.querySelector('#resolution-form').onsubmit=review;document.querySelector('#action').onchange=updateAction;document.querySelector('#quantity').oninput=updateAmount;document.querySelector('#unit-price').oninput=updateAmount;document.querySelector('#cancel').onclick=()=>navigate('worklist');updateAction();}
+function setStatus(message, kind = 'info') {
+  const status = document.querySelector('#status');
+  status.replaceChildren();
+  const icon = document.createElement('span'); icon.className = `status-icon ${kind}`; icon.textContent = {info:'i',success:'✓',error:'×',warning:'!'}[kind];
+  const text = document.createElement('span'); text.textContent = message;
+  status.append(icon, text); status.dataset.kind = kind;
 }
-function renderForm(c){return `<form class="panel" id="resolution-form"><div class="panel-title"><h2>Record customer resolution</h2><small>* Required field</small></div><div class="section-body"><div class="info">Create a follow-on request from the customer agreement. Financial release, dispatch and collection remain separate steps.</div><div id="form-error" role="alert" hidden class="error"></div><h3 style="margin-top:24px">Reference document</h3><div class="form-grid">${field('Billing document','invoice',c.invoice,{readonly:true})}${field('Customer purchase order','po',c.po,{readonly:true})}${field('Sales order','order',c.order,{readonly:true})}${field('Handoff reference','reference',c.reference)}</div><hr class="section-divider"><h3>Resolution details</h3><div class="form-grid"><label>Follow-on action *<select id="action" name="action">${Object.entries(actionLabels).map(([v,k])=>`<option value="${v}" ${v===c.action?'selected':''}>${k}</option>`).join('')}</select></label><label>Order reason *<select id="reason" name="reason">${options(reasons,c.reason)}</select></label>${field('Resolved by','resolved-by','')}${field('Resolution date','resolution-date',new Date().toLocaleDateString('en-CA'),{type:'date'})}<label class="wide">Resolution summary *<textarea id="summary" name="summary" required maxlength="2000" placeholder="Record the agreed resolution and what is being requested."></textarea></label></div><div id="item-fields"><hr class="section-divider"><h3>Affected item</h3><div class="form-grid">${field('Material','material',c.material,{readonly:true})}${field('Description','product',c.product,{readonly:true})}${field('Affected quantity (cases)','quantity',c.affected||1,{type:'number',min:1,max:c.quantity,step:1})}<div id="price-field">${field('Credit per case (USD)','unit-price',c.issue==='Invoice discrepancy'?12:c.price,{type:'number',min:0.01,max:10000,step:0.01})}</div></div><div class="money-box" id="total-box"><span>Requested credit · USD</span><strong id="total"></strong></div></div><div id="action-note" class="info warning" style="margin-top:20px"></div></div><div class="form-footer"><span class="hint">One resolution per case · Duplicate references are blocked</span><button type="button" id="cancel">Cancel</button><button class="primary" type="submit">Review resolution</button></div></form>`;}
-function updateAction(){const action=document.querySelector('#action').value;const note=action==='note',credit=action==='credit';document.querySelector('#item-fields').hidden=note;document.querySelector('#quantity').disabled=note;document.querySelector('#unit-price').disabled=!credit;document.querySelector('#price-field').hidden=!credit;document.querySelector('#total-box').hidden=!credit;document.querySelector('#action-note').textContent={credit:'The credit memo request will remain pending release. Saving does not issue a refund or post an accounting credit.',replacement:'This creates a replacement request only. Saving does not confirm stock, dispatch or a delivery date.',return:'This creates a return request only. Saving does not confirm collection or issue a credit.',note:'This records the resolution and closes the customer case. No financial or fulfillment document is created.'}[action];updateAmount();}
-function updateAmount(){const qty=Number(document.querySelector('#quantity').value),price=Number(document.querySelector('#unit-price').value);document.querySelector('#total').textContent=money(Math.round(qty*price*100)/100);}
-function review(event){event.preventDefault();const c=cases.find(c=>c.id===selected);const get=id=>document.getElementById(id).value.trim();const action=get('action'),qty=action==='note'?0:Number(get('quantity')),price=action==='credit'?Number(get('unit-price')):0;const error=document.querySelector('#form-error');error.hidden=true;
-  const problem=storageError||(!get('reference')||!get('resolved-by')||!get('summary')?'Enter the handoff reference, representative name and resolution summary.':'')||(get('summary').length<12?'Enter a clear resolution summary of at least 12 characters.':'')||(action!=='note'&&(!Number.isInteger(qty)||qty<1||qty>c.quantity)?'Affected quantity must be a whole number within the invoice quantity.':'')||(action==='credit'&&(!Number.isFinite(price)||price<=0)?'Enter a positive credit amount.':'');
-  if(problem){error.textContent=problem;error.hidden=false;error.scrollIntoView({block:'center'});return;}
-  draft={caseId:c.id,account:c.account,customer:c.customer,invoice:c.invoice,material:c.material,action,reason:get('reason'),reference:get('reference'),resolvedBy:get('resolved-by'),resolutionDate:get('resolution-date'),summary:get('summary'),quantity:qty,unitPrice:price,amount:Math.round(qty*price*100)/100};
-  dialog.innerHTML=`<h2>Review customer resolution</h2><div class="dialog-body"><dl><dt>Customer</dt><dd>${esc(c.customer)} · ${c.account}</dd><dt>Reference invoice</dt><dd>${c.invoice}</dd><dt>Follow-on action</dt><dd>${actionLabels[action]}</dd><dt>Order reason</dt><dd>${esc(draft.reason)}</dd>${action!=='note'?`<dt>Affected quantity</dt><dd>${qty} cases</dd>`:''}${action==='credit'?`<dt>Requested credit</dt><dd><strong>${money(draft.amount)}</strong></dd>`:''}<dt>Handoff reference</dt><dd>${esc(draft.reference)}</dd><dt>Resolved by</dt><dd>${esc(draft.resolvedBy)}</dd><dt>Resolution summary</dt><dd class="note">${esc(draft.summary)}</dd></dl><div class="info">${esc(document.querySelector('#action-note').textContent)}</div><div id="save-error" role="alert" class="error" hidden></div></div><div class="dialog-actions"><button id="edit-resolution">Back to edit</button><button id="save-resolution" class="primary">Save resolution</button></div>`;
-  document.querySelector('#edit-resolution').onclick=()=>dialog.close();document.querySelector('#save-resolution').onclick=save;dialog.showModal();
+function getInput(label, id, value, { readonly = false, size = '', type = 'text', description = '' } = {}) {
+  return `<div class="field"><label for="${id}">${label}</label><input id="${id}" class="${size}" value="${esc(value)}" type="${type}" ${readonly || displayed ? 'readonly' : ''} maxlength="180">${description ? `<span class="description">${esc(description)}</span>` : ''}</div>`;
 }
-async function save(){const button=document.querySelector('#save-resolution');button.disabled=true;
-  const commit=()=>{const latest=readState();if(storageError)throw new Error(storageError);const existing=latest.records.find(r=>r.reference===draft.reference||r.caseId===draft.caseId);if(existing)throw new Error(`Resolution already recorded as ${existing.documentId} for ${existing.caseId}. Refresh the worklist to view it.`);const documentId=({credit:'CR',replacement:'RP',return:'RE',note:'NT'}[draft.action])+'-'+crypto.randomUUID().slice(0,8).toUpperCase();const record={...draft,documentId,status:actionStatuses[draft.action],savedAt:new Date().toISOString()};const next={records:[...latest.records,record]};localStorage.setItem(KEY,JSON.stringify(next));state=next;return record;};
-  try{const record=navigator.locks?await navigator.locks.request(KEY,commit):commit();dialog.close();renderDetail();notify(`${actionLabels[record.action]} ${record.documentId} saved`);}catch(error){const box=document.querySelector('#save-error');box.textContent=error.message||'Could not save. Check browser storage and try again.';box.hidden=false;button.disabled=false;}
+function capture() {
+  if (displayed) return;
+  const fields = {reference:'reference',reason:'reason',quantity:'quantity',unitPrice:'unit-price',summary:'header-text',createdBy:'created-by',documentDate:'document-date'};
+  for (const [key,id] of Object.entries(fields)) { const input = document.getElementById(id); if (input) draft[key] = input.value; }
 }
-function renderReceipt(c,r){return `<section class="panel"><div class="panel-title"><h2>Resolution recorded</h2>${tag('Saved','success')}</div><div class="section-body"><div class="info success">Customer resolution saved successfully. Reference ${r.documentId}.</div><div class="receipt-ref">${r.documentId}</div><p>${actionLabels[r.action]} · ${tag(r.status,r.action==='note'?'success':'warning')}</p><div class="form-grid" style="margin-top:24px">${field('Handoff reference','saved-reference',r.reference,{readonly:true})}${field('Resolved by','saved-by',r.resolvedBy,{readonly:true})}${field('Resolution date','saved-date',r.resolutionDate,{readonly:true})}${field('Order reason','saved-reason',r.reason,{readonly:true})}${r.action!=='note'?field('Affected quantity','saved-quantity',r.quantity+' cases',{readonly:true}):''}${r.action==='credit'?field('Requested credit','saved-amount',money(r.amount),{readonly:true}):''}</div><span class="label-text">RESOLUTION SUMMARY</span><p class="note">${esc(r.summary)}</p><div class="info">${r.action==='note'?'Customer case closed with a resolution note.':`Customer agreement recorded. ${esc(r.status)}; this is not confirmation of ${r.action==='credit'?'an issued credit':r.action==='return'?'collection':'dispatch'}.`}</div></div></section>`;}
-function renderDocuments(){main.innerHTML=`<div class="breadcrumb">Home / Sales / Sales Documents</div><div class="heading"><div><h1>Sales Documents</h1><p>Follow-on requests and resolution notes created from customer cases.</p></div><div class="actions"><button id="export">Export records</button></div></div><section class="panel"><div class="panel-title"><h2>Documents <span class="badge-count">(${state.records.length})</span></h2><small>Current browser</small></div><div class="table-wrap"><table><thead><tr><th>Document</th><th>Type</th><th>Customer</th><th>Reference invoice</th><th>Amount</th><th>Status</th><th>Created</th></tr></thead><tbody>${state.records.map(r=>`<tr><td><button class="link-button" data-case="${r.caseId}">${r.documentId}</button><div class="sub">${r.caseId}</div></td><td>${actionLabels[r.action]}</td><td>${esc(r.customer)}</td><td>${r.invoice}</td><td>${r.action==='credit'?money(r.amount):'—'}</td><td>${tag(r.status,r.action==='note'?'success':'warning')}</td><td>${time(r.savedAt)}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">No documents yet. Record a customer resolution to create one.</td></tr>'}</tbody></table></div></section>`;document.querySelectorAll('[data-case]').forEach(b=>b.onclick=()=>navigate('detail',b.dataset.case));document.querySelector('#export').onclick=exportRecords;}
-function renderAudit(){main.innerHTML=`<div class="breadcrumb">Home / Sales / Change Log</div><div class="heading"><div><h1>Change Log</h1><p>Saved customer-resolution entries and their handoff references.</p></div></div><section class="panel"><div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>Changed by</th><th>Case</th><th>Change</th><th>Document</th><th>Handoff reference</th></tr></thead><tbody>${[...state.records].reverse().map(r=>`<tr><td>${time(r.savedAt)}</td><td>${esc(r.resolvedBy)}</td><td><button class="link-button" data-case="${r.caseId}">${r.caseId}</button></td><td>${actionLabels[r.action]} created</td><td>${r.documentId}</td><td>${esc(r.reference)}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">No changes have been saved in this browser.</td></tr>'}</tbody></table></div><div class="table-bottom">Demo history stored locally · Not an immutable enterprise audit log</div></section>`;document.querySelectorAll('[data-case]').forEach(b=>b.onclick=()=>navigate('detail',b.dataset.case));}
-function renderGuide(){main.innerHTML=`<div class="breadcrumb">Home / Demo Guide</div><div class="heading"><div><h1>About this demonstration</h1><p>A SAP-style customer-resolution workbench for computer-use automation.</p></div></div><section class="panel guide"><div class="section-body"><h2>What to demonstrate</h2><ol><li>Open a customer case from the worklist.</li><li>Check the customer, invoice and captured agreement.</li><li>Enter the representative name and resolution summary. Check the action, reason, quantity and amount.</li><li>Select <strong>Review resolution</strong>, then <strong>Save resolution</strong>.</li><li>Verify the saved reference, document flow and change log.</li></ol><h2>Five fictional scenarios</h2><ul>${cases.map(c=>`<li><a href="?case=${c.id}">${c.id} · ${c.customer}</a>: ${esc(c.summary)}</li>`).join('')}</ul><h2>What is based on SAP</h2><p>The sales area, sold-to party, reference billing document, order reason, material, quantity and credit memo request follow the terminology in <a href="https://help.sap.com/docs/SAP_S4HANA_ON-PREMISE/7b24a64d9d0941bda1afa753263d9e39/e4f22cd3184c4ef9badd0b461e5a4a0d.html" target="_blank" rel="noopener">SAP’s credit memo request documentation</a>. A credit memo request must be released before a credit memo can be created.</p><p>The visual design is inspired by SAP Fiori. This custom workbench, its case identifiers, sales area codes, prices and account data are demonstration choices. It is not an authenticated replica of Anheuser-Busch’s internal SAP installation, an official SAP application or an operational system.</p><h2>Storage and automation</h2><p>Records persist only in this browser’s local storage. A new computer or browser profile starts with fresh fixtures. Cross-tab saves use a browser lock when supported. There is no server, authentication or cross-computer state sharing. Use only fictional data.</p><p>The agent should operate visible controls on the configured computer. The URL <code>?case=CS-100241</code> opens a case without submitting anything. Duplicate handoff references and already-recorded cases are blocked within this browser. Keep a durable handoff ledger in the calling app when using multiple machines.</p><h2>Demo controls</h2><p>Export saves the current records as JSON. Reset clears only this demo’s saved records in this browser.</p><div class="actions"><button id="export">Export records</button><button id="reset" class="danger">Reset demo data</button></div></div></section>`;document.querySelector('#export').onclick=exportRecords;document.querySelector('#reset').onclick=()=>{dialog.innerHTML='<h2>Reset demo data?</h2><div class="dialog-body">This removes all saved resolutions from this browser and restores the five open cases. Export first if you need to keep the records.</div><div class="dialog-actions"><button id="keep-data">Cancel</button><button id="confirm-reset" class="danger">Reset demo data</button></div>';document.querySelector('#keep-data').onclick=()=>dialog.close();document.querySelector('#confirm-reset').onclick=()=>{try{localStorage.removeItem(KEY);storageError='';state={records:[]};dialog.close();navigate('worklist');notify('Demo data reset');}catch{notify('Browser storage is unavailable. Data was not reset.');}};dialog.showModal();};}
-function exportRecords(){const blob=new Blob([JSON.stringify({demo:true,exportedAt:new Date().toISOString(),...state},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='abi-sap-demo-records.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>navigate(b.dataset.view));document.querySelector('.sap').onclick=e=>{e.preventDefault();navigate('worklist');};
-window.addEventListener('storage',event=>{if(event.key===KEY){state=readState();if(view!=='detail')render();}});
-const caseParam=new URLSearchParams(location.search).get('case');if(caseParam&&cases.some(c=>c.id===caseParam)){view='detail';selected=caseParam;}else if(['documents','audit','guide'].includes(location.hash.slice(1)))view=location.hash.slice(1);render();
+function render() {
+  const type = documentTypes[draft.action];
+  document.title = `${displayed ? 'Display' : 'Create'} ${type.name} — SAP AB1`;
+  document.querySelector('#screen-title').textContent = `${displayed ? 'Display' : 'Create'} ${type.name}: Overview`;
+  document.querySelector('#document-number').textContent = displayed ? `Document ${displayed.documentId}` : '';
+  document.querySelector('#transaction-name').textContent = displayed ? 'VA03' : type.transaction;
+  for (const id of ['save','save-text','create-reference','check']) document.getElementById(id).disabled = !!displayed || saving;
+  main.innerHTML = `${displayed ? `<div class="saved-banner"><span class="status-icon success">✓</span><strong>${esc(type.name)} ${esc(displayed.documentId)}</strong><span>has been saved.</span><span class="doc-status">${esc(displayed.documentStatus)}</span></div>` : ''}
+    <form class="transaction-form" id="transaction-form" novalidate>
+      <fieldset class="group"><legend>Sales document</legend><div class="group-grid">
+        <div class="field"><label for="document-type">Order type</label><select id="document-type" ${displayed ? 'disabled' : ''}>${Object.entries(documentTypes).map(([key,t])=>`<option value="${key}" ${key===draft.action?'selected':''}>${t.code} — ${t.name}</option>`).join('')}</select></div>
+        ${getInput('Sales organization','sales-org','US01',{readonly:true,size:'short',description:'Anheuser-Busch USA'})}
+        ${getInput('Distribution channel','distribution','10',{readonly:true,size:'short',description:'Wholesale'})}
+        ${getInput('Division','division','01',{readonly:true,size:'short',description:'Beer'})}
+      </div></fieldset>
+      <fieldset class="group"><legend>Header data</legend><div class="group-grid">
+        ${getInput('Sold-to party','sold-to',draft.account,{readonly:true,size:'mid',description:draft.customer})}
+        ${getInput('Ship-to party','ship-to',draft.account,{readonly:true,size:'mid',description:draft.city})}
+        ${getInput('Reference billing doc.','invoice',draft.invoice,{readonly:true,size:'mid'})}
+        ${getInput('Customer PO number','customer-po',draft.po,{readonly:true,size:'mid'})}
+        ${getInput('Customer reference','reference',draft.reference,{size:'long'})}
+        ${getInput('Document date','document-date',draft.documentDate,{type:'date',size:'mid'})}
+        <div class="field"><label for="reason">Order reason</label><select id="reason" ${displayed?'disabled':''}>${reasons.map(r=>`<option value="${esc(r)}" ${draft.reason===r?'selected':''}>${esc(r||'Select reason')}</option>`).join('')}</select></div>
+        ${getInput('Currency','currency','USD',{readonly:true,size:'short',description:'US Dollar'})}
+      </div></fieldset>
+      <div class="tabs" role="tablist" aria-label="Document details"><button type="button" role="tab" data-tab="items" aria-controls="tab-panel" aria-selected="${activeTab==='items'}">Item overview</button><button type="button" role="tab" data-tab="texts" aria-controls="tab-panel" aria-selected="${activeTab==='texts'}">Header texts${draft.summary?'':' *'}</button><button type="button" role="tab" data-tab="flow" aria-controls="tab-panel" aria-selected="${activeTab==='flow'}">Document flow</button></div>
+      <section class="tab-panel" id="tab-panel" role="tabpanel">${activeTab==='items'?renderItems():activeTab==='texts'?renderTexts():renderFlow()}</section>
+      <div class="footer-fields">${getInput('Created by','created-by',draft.createdBy)}${getInput('Billing block','billing-block',draft.action==='credit'?'Pending release':'Not applicable',{readonly:true})}</div>
+    </form>`;
+  document.querySelector('#transaction-form').onsubmit = event => { event.preventDefault(); void saveDocument(); };
+  document.querySelector('#document-type').onchange = event => { capture(); draft.action=event.target.value; dirty=true; render(); };
+  document.querySelectorAll('[data-tab]').forEach(button=>button.onclick=()=>{capture();activeTab=button.dataset.tab;render();});
+  for (const input of main.querySelectorAll('input:not([readonly]),textarea:not([readonly]),select:not(:disabled)')) input.addEventListener('input',()=>{dirty=true;capture();updateTotal();});
+}
+function renderItems() {
+  if (draft.action==='note') return '<div class="grid-toolbar"><strong>Customer contact</strong></div><p class="inline-note">Maintain the contact text on the Header texts tab. This document does not contain sales items.</p>';
+  const credit=draft.action==='credit';
+  return `<div class="grid-toolbar"><strong>All items</strong><span>${draft.invoice?'1':'0'} item(s)</span><span class="right">${draft.invoice?`Copied from billing document ${esc(draft.invoice)}`:'No reference document selected'}</span></div>
+    <div class="table-scroll"><table><thead><tr><th></th><th>Itm</th><th>Material</th><th>Order quantity</th><th>Un</th><th>Description</th><th>${credit?'Credit / case':'Net price'}</th><th>Crcy</th><th>Net value</th><th>Plant</th></tr></thead><tbody>
+    ${draft.invoice?`<tr><td class="row-number selected">▶</td><td>10</td><td>${esc(draft.material)}</td><td><input id="quantity" aria-label="Order quantity" type="number" min="1" max="${draft.invoiceQuantity}" step="1" class="item-input" value="${esc(draft.quantity)}" ${displayed?'readonly':''}></td><td>CS</td><td>${esc(draft.product)}</td><td><input id="unit-price" aria-label="Credit per case" type="number" min="0.01" max="10000" step="0.01" class="item-input" value="${credit?esc(draft.unitPrice):'0.00'}" ${displayed||!credit?'readonly':''}></td><td>USD</td><td id="line-total">${formatAmount(getTotal())}</td><td>US01</td></tr>`:''}
+    ${Array.from({length:4},()=>'<tr class="ghost-row"><td class="row-number"></td>'+Array.from({length:9},()=>'<td>&nbsp;</td>').join('')+'</tr>').join('')}</tbody></table></div>
+    <div class="grid-total"><span>Net value</span><strong id="net-value">${formatAmount(getTotal())} USD</strong></div>
+    <div class="inline-note">${draft.invoice?`Reference quantity: ${draft.invoiceQuantity} CS. `:''}${credit?'Credit memo request is saved with a billing block.':'Subsequent processing is performed separately.'}</div>`;
+}
+function renderTexts() {
+  return `<div class="text-layout"><div class="text-types"><span>Customer resolution</span></div><div class="text-editor"><label for="header-text">Header text / customer resolution</label><textarea id="header-text" maxlength="2000" ${displayed?'readonly':''}>${esc(draft.summary)}</textarea><div class="editor-footer"><span>Language: EN</span><span>Plain text · 2,000 characters maximum</span></div></div></div>`;
+}
+function renderFlow() {
+  const rows=draft.invoice?[['Sales order',draft.order,'Completed'],['Outbound delivery',draft.delivery,'Goods issue posted'],['Billing document',draft.invoice,'Posted']]:[];
+  if(displayed)rows.push([documentTypes[draft.action].name,displayed.documentId,displayed.documentStatus]);
+  return `<div class="grid-toolbar"><strong>Document flow</strong></div><div class="table-scroll"><table><thead><tr><th>Document category</th><th>Document number</th><th>Status</th></tr></thead><tbody>${rows.map(([category,id,status])=>`<tr><td>${esc(category)}</td><td>${esc(id)}</td><td>${esc(status)}</td></tr>`).join('')||'<tr><td colspan="3">No reference document selected</td></tr>'}</tbody></table></div>${displayed?`<div class="status-row"><dl><dt>Customer reference</dt><dd>${esc(displayed.reference)}</dd><dt>Created at</dt><dd>${esc(new Date(displayed.savedAt).toLocaleString())}</dd></dl></div>`:''}`;
+}
+function getTotal() { return draft.action==='credit'?Math.round(Number(draft.quantity||0)*Number(draft.unitPrice||0)*100)/100:0; }
+function updateTotal() {
+  const line=document.querySelector('#line-total'),total=document.querySelector('#net-value');
+  if(line)line.textContent=formatAmount(getTotal());if(total)total.textContent=`${formatAmount(getTotal())} USD`;
+}
+function showDialog(title, body, actions) {
+  dialog.innerHTML=`<div class="dialog-title"><span>${esc(title)}</span><button type="button" id="dialog-close" aria-label="Close dialog">×</button></div><div class="dialog-body">${body}</div><div class="dialog-actions">${actions}</div>`;
+  document.querySelector('#dialog-close').onclick=()=>dialog.close();dialog.showModal();
+}
+function referenceDialog() {
+  capture();showDialog('Create with Reference',`<div class="field"><label for="reference-invoice">Billing document</label><input id="reference-invoice" value="${esc(draft.invoice)}" maxlength="10" inputmode="numeric" autofocus></div><div class="dialog-hint">Enter the billing document to copy its customer and material data.</div><p id="dialog-error" class="dialog-error" role="alert"></p>`,`<button id="copy-reference">Copy</button><button id="dialog-cancel">Cancel</button>`);
+  document.querySelector('#dialog-cancel').onclick=()=>dialog.close();
+  const copy=()=>{const value=document.querySelector('#reference-invoice').value.trim(),invoice=invoices.find(i=>i.invoice===value);
+    if(!invoice){document.querySelector('#dialog-error').textContent=`Billing document ${value||'(blank)'} does not exist in this system.`;return;}
+    const action=draft.action;draft={...createDraft(action),...invoice,invoiceQuantity:invoice.quantity,quantity:'',unitPrice:invoice.price};delete draft.caseId;
+    displayed=null;dirty=true;activeTab='items';dialog.close();render();setStatus(`Data copied from billing document ${invoice.invoice}. Enter quantity, reason, customer reference and header text.`,'success');};
+  document.querySelector('#copy-reference').onclick=copy;document.querySelector('#reference-invoice').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();copy();}};
+}
+function getValidationError() {
+  if(!draft.invoice)return ['Select a reference billing document using Create with Reference.','create-reference'];
+  if(!draft.reference.trim())return ['Enter a customer reference. Use the approval reference from Wonderful.','reference'];
+  if(!draft.reason)return ['Enter an order reason.','reason'];
+  if(!draft.createdBy.trim())return ['Enter the name or ID of the document creator.','created-by'];
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(draft.documentDate))return ['Enter a valid document date.','document-date'];
+  if(draft.action!=='note'&&(!Number.isInteger(Number(draft.quantity))||Number(draft.quantity)<1||Number(draft.quantity)>draft.invoiceQuantity))return [`Order quantity must be a whole number between 1 and ${draft.invoiceQuantity} cases.`,'quantity'];
+  if(draft.action==='credit'&&(!Number.isFinite(Number(draft.unitPrice))||Number(draft.unitPrice)<=0||Number(draft.unitPrice)>10000||Math.abs(Number(draft.unitPrice)*100-Math.round(Number(draft.unitPrice)*100))>0.000001))return ['Credit per case must be a positive USD amount with at most two decimal places.','unit-price'];
+  if(draft.summary.trim().length<12)return ['Maintain a customer resolution of at least 12 characters in Header texts.','header-text'];
+  return null;
+}
+function checkDocument() {
+  capture();const error=getValidationError();if(error){if(error[1]==='header-text'){activeTab='texts';render();}else if(['quantity','unit-price'].includes(error[1])){activeTab='items';render();}setStatus(error[0],'error');document.getElementById(error[1])?.focus();return false;}
+  setStatus('Document is complete. Save to create the sales document.','success');return true;
+}
+async function saveDocument() {
+  if(displayed||saving||dialog.open)return;
+  if(!checkDocument())return;
+  saving=true;document.querySelector('#save').disabled=true;document.querySelector('#save-text').disabled=true;
+  try{
+    const persist=()=>{const records=getRecords();const reference=draft.reference.trim();const existing=records.find(r=>r.reference===reference);
+      if(existing)throw new Error(`Customer reference already exists in document ${existing.documentId}. Use Display Document to verify it.`);
+      const type=documentTypes[draft.action];let number=type.prefix+1;while(records.some(r=>r.documentId===String(number)))number++;
+      const record={...draft,reference,summary:draft.summary.trim(),createdBy:draft.createdBy.trim(),quantity:draft.action==='note'?0:Number(draft.quantity),unitPrice:draft.action==='credit'?Number(draft.unitPrice):0,amount:getTotal(),documentId:String(number),documentStatus:type.status,savedAt:new Date().toISOString(),demo:true};
+      localStorage.setItem(STORAGE_KEY,JSON.stringify([...records,record]));return record;};
+    displayed=navigator.locks?await navigator.locks.request(STORAGE_KEY,persist):persist();draft={...displayed};dirty=false;activeTab='items';render();setStatus(`${documentTypes[draft.action].name} ${displayed.documentId} has been saved.`,'success');
+  }catch(error){setStatus(error.message||'Document could not be saved. Check storage availability.','error');}
+  finally{saving=false;document.querySelector('#save').disabled=!!displayed;document.querySelector('#save-text').disabled=!!displayed;}
+}
+function displayDialog() {
+  showDialog('Display Sales Document',`<div class="field"><label for="find-document">Document / reference</label><input id="find-document" maxlength="180" autofocus></div><div class="dialog-hint">Enter an exact sales document number or customer reference.</div><p id="dialog-error" class="dialog-error" role="alert"></p>`,`<button id="open-document">Display</button><button id="dialog-cancel">Cancel</button>`);
+  document.querySelector('#dialog-cancel').onclick=()=>dialog.close();
+  const find=()=>{try{const query=document.querySelector('#find-document').value.trim();const record=getRecords().find(r=>r.documentId===query||r.reference===query);if(!record)throw new Error('No document found for this number or customer reference.');displayed=record;draft={...record};dirty=false;activeTab='items';dialog.close();render();setStatus(`Displaying ${documentTypes[record.action].name} ${record.documentId}.`);}catch(error){document.querySelector('#dialog-error').textContent=error.message;}};
+  document.querySelector('#open-document').onclick=find;document.querySelector('#find-document').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();find();}};
+}
+function startNew(action=draft.action) {
+  const reset=()=>{draft=createDraft(action);displayed=null;dirty=false;activeTab='items';render();setStatus('Create a sales document with reference to a billing document.');};
+  if(dirty&&!displayed){showDialog('Exit transaction','<p>Unsaved entries will be lost. Continue?</p>','<button id="discard">Continue</button><button id="keep-editing">Cancel</button>');document.querySelector('#discard').onclick=()=>{dialog.close();reset();};document.querySelector('#keep-editing').onclick=()=>dialog.close();}else reset();
+}
+function executeCommand() {
+  const code=document.querySelector('#command').value.trim().toUpperCase().replace(/^\/N/,'');
+  if(code==='VA01')startNew('credit');else if(code==='VA03')displayDialog();else if(code==='ZCNOTE')startNew('note');else setStatus(`Transaction ${code} is not available in this demonstration system.`,'error');
+}
+function showHelp() {
+  showDialog('SAP — Application Help',`<p>This is a legacy SAP GUI-style demonstration for executing customer resolutions. Review and approval take place in the separate Wonderful Control Tower application.</p><p>Use <strong>Create with Reference</strong>, maintain the header and item data, enter the resolution on <strong>Header texts</strong>, then <strong>Save</strong>. Use <strong>Display Document</strong> to verify an existing document by number or customer reference.</p><table class="help-table"><thead><tr><th>Billing document</th><th>Sold-to party</th><th>Customer</th></tr></thead><tbody>${invoices.map(i=>`<tr><td>${i.invoice}</td><td>${i.account}</td><td>${esc(i.customer)}</td></tr>`).join('')}</tbody></table><p class="help-footnote" style="margin-top:15px">All data is fictional. Saved documents remain in this browser only. ZCNOTE is a custom demo transaction. The layout is inspired by legacy SAP GUI; it is not a verified copy of Anheuser-Busch's internal system.</p>`,`<button id="help-close">Close</button>`);
+  document.querySelector('#help-close').onclick=()=>dialog.close();
+}
+function openMenu(button) {
+  const menu=document.querySelector('#menu');const menus={document:[['New',()=>startNew()],['Save',()=>void saveDocument()],['Display',displayDialog]],edit:[['Check document',checkDocument],['Cancel entry',()=>startNew()]],goto:[['Item overview',()=>{capture();activeTab='items';render();}],['Header texts',()=>{capture();activeTab='texts';render();}],['Document flow',()=>{capture();activeTab='flow';render();}]],system:[['System information',showHelp]],help:[['Application help',showHelp]]};
+  const items=menus[button.dataset.menu];menu.replaceChildren();for(const [label,action]of items){const item=document.createElement('button');item.setAttribute('role','menuitem');item.textContent=label;item.onclick=()=>{menu.hidden=true;action();};menu.append(item);}
+  const rect=button.getBoundingClientRect();menu.style.left=`${rect.left+scrollX}px`;menu.style.top=`${rect.bottom+scrollY}px`;menu.hidden=false;
+}
+for(const id of ['save','save-text'])document.getElementById(id).onclick=()=>void saveDocument();
+for(const id of ['display','find'])document.getElementById(id).onclick=displayDialog;
+for(const id of ['new','back','cancel'])document.getElementById(id).onclick=()=>startNew();
+for(const id of ['create-reference'])document.getElementById(id).onclick=referenceDialog;
+document.querySelector('#check').onclick=checkDocument;document.querySelector('#help').onclick=showHelp;
+document.querySelector('#execute').onclick=executeCommand;document.querySelector('#command').onkeydown=e=>{if(e.key==='Enter')executeCommand();};
+document.querySelectorAll('[data-menu]').forEach(button=>button.onclick=e=>{e.stopPropagation();openMenu(button);});
+document.addEventListener('click',()=>document.querySelector('#menu').hidden=true);
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();void saveDocument();}if(e.key==='Escape')document.querySelector('#menu').hidden=true;});
+const params=new URLSearchParams(location.search),invoice=invoices.find(i=>i.invoice===params.get('invoice')||i.caseId===params.get('case'));
+if(invoice){const action=Object.hasOwn(documentTypes,params.get('transaction'))?params.get('transaction'):'credit';draft={...createDraft(action),...invoice,invoiceQuantity:invoice.quantity,quantity:'',unitPrice:invoice.price};delete draft.caseId;}
+render();

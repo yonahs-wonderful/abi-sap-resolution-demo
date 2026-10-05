@@ -1,0 +1,8 @@
+; Add these records in the existing Cloudflare zone. Preserve unrelated records.
+; Use DNS-only while GitHub validates the domain and issues its certificate.
+$ORIGIN yonahshafner.com.
+$TTL 300
+@ IN A 185.199.108.153
+@ IN A 185.199.109.153
+@ IN A 185.199.110.153
+@ IN A 185.199.111.153

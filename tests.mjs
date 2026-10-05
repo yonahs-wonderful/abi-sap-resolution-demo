@@ -2,93 +2,109 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
-
-const remote=process.env.DEMO_TEST_URL;
-const base=remote||'http://127.0.0.1:4174/';
-const server=remote?null:spawn('python3',['-m','http.server','4174'],{stdio:'ignore'});
+const base=process.env.DEMO_TEST_URL||'http://127.0.0.1:4174/';
+const server=process.env.DEMO_TEST_URL?null:spawn('python3',['-m','http.server','4174'],{stdio:'ignore'});
+const key='abi-sap-transactions-v2';
 let browser;
-try {
+async function fillDocument(page,{invoice='9000124581',action='credit',reference='APPROVAL-001',quantity='3',price='24.50',reason='Short delivery'}={}){
+  await page.goto(base+'?invoice='+invoice+'&transaction='+action);
+  await page.getByLabel('Customer reference',{exact:true}).fill(reference);
+  await page.getByLabel('Order reason',{exact:true}).selectOption(reason);
+  await page.getByLabel('Created by',{exact:true}).fill('Demo Operator');
+  if(action!=='note')await page.getByLabel('Order quantity',{exact:true}).fill(quantity);
+  if(action==='credit')await page.getByLabel('Credit per case',{exact:true}).fill(price);
+  await page.getByRole('tab',{name:/Header texts/}).click();
+  await page.getByLabel('Header text / customer resolution',{exact:true}).fill('Record the customer resolution already approved in Wonderful.');
+  await page.getByRole('tab',{name:'Item overview',exact:true}).click();
+}
+async function readRecords(page){return page.evaluate(k=>JSON.parse(localStorage.getItem(k)||'[]'),key);}
+async function waitSaved(page){await page.locator('.saved-banner').waitFor();}
+try{
   if(server)for(let i=0;i<40;i++){try{await fetch(base);break;}catch{await new Promise(r=>setTimeout(r,100));}}
   browser=await chromium.launch({headless:true});
-  const context=await browser.newContext({viewport:{width:1440,height:1000}});
-  const page=await context.newPage();
-  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const context=await browser.newContext({viewport:{width:1440,height:960}});
+  context.setDefaultTimeout(10000);
+  const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(base);
-  assert.equal(await page.locator('#cases-body tr').count(),5);
-  await page.getByLabel('Search',{exact:true}).fill('9000124581');
-  assert.equal(await page.locator('#cases-body tr').count(),1);
-  assert.match(await page.locator('#cases-body').innerText(),/Riverside Market/);
-  await page.getByRole('button',{name:'Open CS-100241',exact:true}).click();
-  await page.getByRole('button',{name:'Review resolution',exact:true}).click();
-  assert.equal(await page.locator('#dialog').isVisible(),false,'Empty mandatory fields must block review');
-  await page.getByLabel('Resolved by',{exact:false}).fill('Demo Representative');
-  await page.getByLabel('Resolution summary',{exact:false}).fill('Record the agreed credit for 3 missing cases, pending financial release.');
-  await page.getByLabel('Affected quantity',{exact:false}).fill('21');
-  await page.getByRole('button',{name:'Review resolution',exact:true}).click();
-  assert.equal(await page.locator('#dialog').isVisible(),false,'Quantity exceeding invoice must be rejected');
-  await page.getByLabel('Affected quantity',{exact:false}).fill('3');
-  await page.getByRole('button',{name:'Review resolution',exact:true}).click();
-  assert.match(await page.locator('#dialog').innerText(),/\$73\.50/);
-  // Two tabs submit the same case concurrently. Exactly one persisted record wins.
-  const second=await context.newPage();await second.goto(base+'?case=CS-100241');
-  await second.getByLabel('Resolved by',{exact:false}).fill('Second Representative');
-  await second.getByLabel('Resolution summary',{exact:false}).fill('Duplicate attempt from a second tab must not create another credit.');
-  await second.getByRole('button',{name:'Review resolution',exact:true}).click();
-  await Promise.all([page.getByRole('button',{name:'Save resolution',exact:true}).click(),second.getByRole('button',{name:'Save resolution',exact:true}).click()]);
-  await page.waitForTimeout(200);
-  let records=await page.evaluate(()=>JSON.parse(localStorage.getItem('abi-sap-demo-v1')).records);
-  assert.equal(records.length,1);assert.equal(records[0].amount,73.5);assert.equal(records[0].status,'Pending release');
-  const firstId=records[0].documentId;
-  await page.reload();assert.match(await page.locator('main').innerText(),new RegExp(firstId));
-  assert.equal(await page.locator('#resolution-form').count(),0,'Recorded cases cannot be submitted again');
+  assert.match(await page.title(),/Create Credit Memo Request/);
+  assert.equal(await page.getByRole('button',{name:/approve|review resolution/i}).count(),0);
+  assert.equal(await page.locator('.metrics,.filters,#cases-body').count(),0,'External SAP must not contain a control tower');
+  await page.getByRole('button',{name:'Save',exact:true}).click();
+  assert.match(await page.locator('#status').innerText(),/Select a reference billing/);
+  await page.getByRole('button',{name:/Create with Reference/}).click();
+  await page.getByLabel('Billing document',{exact:true}).fill('9999999999');
+  await page.getByRole('button',{name:'Copy',exact:true}).click();
+  assert.match(await page.locator('#dialog-error').innerText(),/does not exist/);
+  await page.getByLabel('Billing document',{exact:true}).fill('9000124581');
+  await page.getByRole('button',{name:'Copy',exact:true}).click();
+  assert.equal(await page.getByLabel('Sold-to party',{exact:true}).inputValue(),'10004521');
+  await page.getByLabel('Customer reference',{exact:true}).fill('APPROVAL-001');
+  await page.getByLabel('Order reason',{exact:true}).selectOption('Short delivery');
+  await page.getByLabel('Created by',{exact:true}).fill('Demo Operator');
+  await page.getByLabel('Order quantity',{exact:true}).fill('21');
+  await page.getByRole('button',{name:'Save',exact:true}).click();
+  assert.match(await page.locator('#status').innerText(),/between 1 and 20/);
+  await page.getByLabel('Order quantity',{exact:true}).fill('3');
+  await page.getByRole('button',{name:'Save',exact:true}).click();
+  assert.match(await page.locator('#status').innerText(),/Header texts/);
+  await page.getByLabel('Header text / customer resolution',{exact:true}).fill('Credit for three missing cases, approved in Wonderful.');
+  await page.getByRole('tab',{name:'Item overview',exact:true}).click();
+  assert.equal(await page.getByLabel('Order quantity',{exact:true}).inputValue(),'3','Tab changes preserve entries');
+  assert.equal(await page.locator('#net-value').innerText(),'73.50 USD');
+  const second=await context.newPage();await fillDocument(second);
+  await Promise.all([page.getByRole('button',{name:'Save',exact:true}).click(),second.getByRole('button',{name:'Save',exact:true}).click()]);
+  await page.waitForTimeout(300);
+  let records=await readRecords(page);assert.equal(records.length,1,'Concurrent saves produce one document');
+  assert.equal(records[0].amount,73.50);assert.equal(records[0].documentId,'6000010001');
+  assert.equal(records[0].documentStatus,'Billing block — pending release');
+  assert.equal(await page.locator('#dialog').isVisible(),false,'Save does not require a second approval/review');
   await second.close();
-  await page.getByRole('button',{name:'Sales Documents',exact:true}).click();
-  assert.match(await page.locator('main').innerText(),/Pending release/);
-  await page.getByRole('button',{name:'Change Log',exact:true}).click();assert.match(await page.locator('main').innerText(),new RegExp(firstId));
-  // Reject reuse of the same handoff reference on a different case.
-  await page.goto(base+'?case=CS-100242');
-  await page.getByLabel('Handoff reference',{exact:false}).fill('ABI-DEMO-100241');
-  await page.getByLabel('Resolved by',{exact:false}).fill('Demo Representative');
-  await page.getByLabel('Resolution summary',{exact:false}).fill('Request two replacements for damaged cases.');
-  await page.getByRole('button',{name:'Review resolution',exact:true}).click();
-  await page.getByRole('button',{name:'Save resolution',exact:true}).click();
-  await page.locator('#save-error').waitFor({state:'visible'});
-  assert.match(await page.locator('#save-error').innerText(),/already recorded/);
-  await page.getByRole('button',{name:'Back to edit',exact:true}).click();
-  await page.getByLabel('Handoff reference',{exact:false}).fill('ABI-DEMO-100242');
-  await page.getByRole('button',{name:'Review resolution',exact:true}).click();
-  await page.getByRole('button',{name:'Save resolution',exact:true}).click();
-  await page.getByRole('heading',{name:'Resolution recorded',exact:true}).waitFor();
-  assert.match(await page.locator('main').innerText(),/Awaiting fulfillment/);
-  // Complete the remaining supported paths and verify totals and persistence.
-  for(const id of ['CS-100243','CS-100244','CS-100245']){
-    await page.goto(base+'?case='+id);
-    await page.getByLabel('Resolved by',{exact:false}).fill('Demo Representative');
-    await page.getByLabel('Resolution summary',{exact:false}).fill('Record the agreed demonstration resolution for '+id+'.');
-    if(id==='CS-100245')assert.equal(await page.locator('#item-fields').isVisible(),false);
-    await page.getByRole('button',{name:'Review resolution',exact:true}).click();
-    await page.getByRole('button',{name:'Save resolution',exact:true}).click();
-    await page.getByRole('heading',{name:'Resolution recorded',exact:true}).waitFor();
+  await page.reload();
+  await page.getByRole('button',{name:'Display Document',exact:true}).click();
+  await page.getByLabel('Document / reference',{exact:true}).fill('APPROVAL-001');
+  await page.getByRole('button',{name:'Display',exact:true}).click();
+  await waitSaved(page);
+  assert.match(await page.getByRole('heading',{level:1}).innerText(),/Display Credit Memo Request/);
+  assert.equal(await page.getByLabel('Order quantity',{exact:true}).inputValue(),'3');
+  assert.equal(await page.getByRole('button',{name:'Save',exact:true}).isDisabled(),true);
+  await page.getByRole('tab',{name:'Document flow',exact:true}).click();
+  assert.match(await page.locator('#tab-panel').innerText(),/6000010001/);
+  await fillDocument(page,{invoice:'9000124623',action:'replacement',reference:'APPROVAL-001',quantity:'2',reason:'Damaged in transit'});
+  await page.getByRole('button',{name:'Save',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('already exists'));
+  assert.equal((await readRecords(page)).length,1);
+  await page.getByLabel('Customer reference',{exact:true}).fill('APPROVAL-002');
+  await page.getByRole('button',{name:'Save',exact:true}).click();await waitSaved(page);
+  assert.match(await page.locator('.saved-banner').innerText(),/5000090001/);
+  for(const scenario of [
+    {invoice:'9000124556',action:'return',reference:'APPROVAL-003',quantity:'2',reason:'Incorrect material'},
+    {invoice:'9000124519',action:'credit',reference:'APPROVAL-004',quantity:'1',price:'12.00',reason:'Pricing adjustment'},
+    {invoice:'9000124637',action:'note',reference:'APPROVAL-005',reason:'Information provided'}
+  ]){
+    await fillDocument(page,scenario);await page.getByRole('button',{name:'Save',exact:true}).click();await waitSaved(page);
   }
-  records=await page.evaluate(()=>JSON.parse(localStorage.getItem('abi-sap-demo-v1')).records);
-  assert.equal(records.length,5);assert.equal(records.filter(r=>r.action==='credit').reduce((sum,r)=>sum+r.amount,0),85.5);
+  records=await readRecords(page);assert.equal(records.length,5);assert.equal(records.filter(r=>r.action==='credit').reduce((sum,r)=>sum+r.amount,0),85.50);
+  assert.equal(records.find(r=>r.action==='return').documentStatus,'Open — returns delivery not created');
   assert.equal(records.find(r=>r.action==='note').quantity,0);
-  assert.equal(records.find(r=>r.action==='return').status,'Awaiting collection');
-  await page.getByRole('button',{name:'Demo Guide',exact:true}).click();
-  const download=page.waitForEvent('download');await page.getByRole('button',{name:'Export records',exact:true}).click();
-  assert.equal((await download).suggestedFilename(),'abi-sap-demo-records.json');
-  await page.getByRole('button',{name:'Reset demo data',exact:true}).click();
+  // Editing then cancelling keeps persisted documents and warns about losing unsaved work.
+  await fillDocument(page,{reference:'NOT-SAVED'});
+  await page.getByRole('button',{name:'New document',exact:true}).click();
+  assert.match(await page.locator('#dialog').innerText(),/Unsaved entries will be lost/);
   await page.getByRole('button',{name:'Cancel',exact:true}).click();
-  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('abi-sap-demo-v1')).records.length),5);
-  await page.getByRole('button',{name:'Reset demo data',exact:true}).click();
-  await page.locator('#confirm-reset').click();
-  assert.equal(await page.evaluate(()=>localStorage.getItem('abi-sap-demo-v1')),null);
+  assert.equal(await page.getByLabel('Customer reference',{exact:true}).inputValue(),'NOT-SAVED');
+  // A browser storage error never produces a success receipt.
+  const storagePage=await context.newPage();await fillDocument(storagePage,{reference:'STORAGE-FAILURE'});
+  await storagePage.evaluate(()=>{Storage.prototype.setItem=()=>{throw new Error('Browser storage unavailable');};});
+  await storagePage.getByRole('button',{name:'Save',exact:true}).click();
+  await storagePage.waitForFunction(()=>document.querySelector('#status').textContent.includes('Browser storage unavailable'));
+  assert.equal(await storagePage.locator('.saved-banner').count(),0);await storagePage.close();
   await mkdir('test-results',{recursive:true});
-  await page.screenshot({path:'test-results/worklist.png',fullPage:true});
-  await page.goto(base+'?case=CS-100241');await page.screenshot({path:'test-results/resolution-form.png',fullPage:true});
-  await page.setViewportSize({width:390,height:844});
-  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Mobile detail should not overflow');
-  await page.screenshot({path:'test-results/mobile-form.png',fullPage:true});
+  await page.screenshot({path:'test-results/legacy-sap-entry.png',fullPage:true});
+  await page.goto(base);
+  await page.getByRole('button',{name:'Display Document',exact:true}).click();
+  await page.getByLabel('Document / reference',{exact:true}).fill('6000010001');
+  await page.getByRole('button',{name:'Display',exact:true}).click();await waitSaved(page);
+  await page.screenshot({path:'test-results/legacy-sap-saved.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('PASS: five resolution paths, required fields, invoice quantity limit, credit totals, concurrent saves, duplicate references, reload persistence, documents, history, export, reset and mobile layout.');
-} finally {await browser?.close();server?.kill();}
+  console.log('PASS: execution-only legacy UI, reference lookup, missing-field and quantity validation, direct Save, concurrent duplicate prevention, all five tasks, document display after reload, document flow, unsaved cancellation, and storage failure handling.');
+}finally{await browser?.close();server?.kill();}
