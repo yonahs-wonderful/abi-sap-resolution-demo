@@ -16,6 +16,16 @@ Credit data is isolated in browser-local storage under `abi-sap-credit-limits-v1
 
 Tests cover direct save, invalid amounts, reload/display, history, duplicate references, concurrent changes, storage failures, and preservation of the existing sales-document flow.
 
+## Additional use case: Budweiser tap replacement
+
+Open [Tap Replacement](https://yonahs-wonderful.github.io/abi-sap-resolution-demo/tap-replacement.html?account=10004912). This independent **ZTAP01 custom demo transaction** keeps the same legacy SAP appearance. The primary credit-line increase page, credit skill, and sales-document page are unchanged.
+
+The fictional fixture replaces one broken Budweiser draft tap assembly (`BUD-TAP-001`, equipment `EQ-BUD-04912-01`) for Oak & Main Grill (`10004912`) free of charge. Enter quantity, replacement reason, approval reference, operator, contact, full ship-to address, shipping method and damage description. See `sample-tap-replacement.json` for all values. No invoice is required. Saving generates a replacement request with status **Open — delivery not created**; it does not create a shipment or tracking number.
+
+Display Request supports exact document/reference lookup; Request history lists saved requests. Records use their own browser-local key `abi-sap-tap-replacements-v1`, with Web Locks and duplicate-reference protection. No existing credit limits or sales documents are modified. The fixed account query selects the supported fixture without pre-filling the approved action. The Goto menu can return to the primary credit demo or credit memo screen.
+
+The separate agent skill is `replace-budweiser-tap`, task type `replace_budweiser_tap`, action `budweiser_tap_replacement`. Control Tower and Omni triggers are not configured by this addition. Future triggers must supply a stable approval reference and maintain their own cross-machine dispatch ledger.
+
 ## Transactions
 
 - `FD32`: separate customer credit limit increase screen.

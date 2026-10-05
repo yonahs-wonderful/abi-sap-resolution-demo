@@ -1,0 +1,23 @@
+{
+  "task_type": "replace_budweiser_tap",
+  "action": "budweiser_tap_replacement",
+  "approval_id": "ABI-TAP-DEMO-001",
+  "customer_account": "10004912",
+  "customer_name": "Oak & Main Grill",
+  "sales_organization": "US01",
+  "equipment_id": "EQ-BUD-04912-01",
+  "material": "BUD-TAP-001",
+  "brand": "Budweiser",
+  "quantity": 1,
+  "unit": "EA",
+  "net_value": 0,
+  "currency": "USD",
+  "replacement_reason": "Broken / damaged tap",
+  "contact_name": "Alex Morgan",
+  "contact_phone": "+1 512 555 0148",
+  "ship_to_address": "214 Oak Street, Austin, TX 78701",
+  "shipping_method": "Standard ground",
+  "created_by": "ABI Equipment Services",
+  "damage_description": "Budweiser-branded draft tap assembly is broken and no longer dispenses correctly. Customer requested a replacement. Supply one BUD-TAP-001 assembly free of charge to the confirmed ship-to address.",
+  "demo": true
+}
