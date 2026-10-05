@@ -4,7 +4,7 @@ Static, SAP Fiori-inspired customer-resolution workbench for a Wonderful compute
 
 ## Run
 
-`npm ci`, `npm run check`, `npm test`, and `npm start` (http://localhost:4173). Serve the directory as static files; no production dependency or build is needed. GitHub Pages serves the root of `main` with `.nojekyll`.
+`npm ci`, `npx playwright install chromium` (once for tests), `npm run check`, `npm test`, and `npm start` (http://localhost:4173). Serve the directory as static files; no production dependency or build is needed. GitHub Pages serves the root of `main` with `.nojekyll`.
 
 The five cases cover delivery shortage credits, damage replacements, incorrect-product returns, invoice adjustments and information-only resolution. Forms support review, save, generated document references, document flow, a change log and JSON export. `?case=CS-100241` opens a case; URL parameters never submit data.
 
