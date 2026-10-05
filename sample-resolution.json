@@ -1,0 +1,15 @@
+{
+  "demo": true,
+  "approved": true,
+  "handoff_key": "ABI-DEMO-100241",
+  "case_id": "CS-100241",
+  "customer_account": "10004521",
+  "reference_invoice": "9000124581",
+  "action": "credit",
+  "order_reason": "Short delivery",
+  "resolved_by": "Demo Representative",
+  "resolution_date": "2026-10-05",
+  "resolution_summary": "Customer confirmed that 3 of 20 cases of Bud Light were missing. Record the agreed USD 73.50 credit memo request against the original invoice; financial release remains pending.",
+  "quantity_cases": 3,
+  "unit_credit_usd": 24.50
+}
