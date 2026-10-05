@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { testCreditIncrease } from './credit-tests.mjs';
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
@@ -105,6 +106,7 @@ try{
   await page.getByLabel('Document / reference',{exact:true}).fill('6000010001');
   await page.getByRole('button',{name:'Display',exact:true}).click();await waitSaved(page);
   await page.screenshot({path:'test-results/legacy-sap-saved.png',fullPage:true});
+  await testCreditIncrease(context,base);
   assert.deepEqual(errors,[]);
   console.log('PASS: execution-only legacy UI, reference lookup, missing-field and quantity validation, direct Save, concurrent duplicate prevention, all five tasks, document display after reload, document flow, unsaved cancellation, and storage failure handling.');
 }finally{await browser?.close();server?.kill();}

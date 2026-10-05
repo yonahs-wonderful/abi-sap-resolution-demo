@@ -4,8 +4,21 @@ This site is the **execution target**, separate from the Wonderful Control Tower
 
 The site deliberately has no approval queue, customer-conversation panel, dashboard, approval action, or second review step. It resembles a legacy SAP GUI application: menu bar, command field, standard toolbar, sales-document header, editable item grid, Header texts, Document flow, and a bottom status bar.
 
+## First use case: credit line increase
+
+Open [Credit Line Increase](https://yonahs-wonderful.github.io/abi-sap-resolution-demo/credit-increase.html?account=10004521). This separate FD32-inspired page uses the same SAP styling as the existing credit memo screen, which remains at `index.html`. The Goto menu and `/nFD32` command on the sales-document page open it.
+
+Select the customer, enter the **approved new credit limit** (the total limit, not the increment), approval reference, operator and reason, then Save. Current limit, credit exposure, risk category and available credit are shown for context. Display Change retrieves the saved change by exact document number or approval reference; Change documents shows customer history. There is no second approval step. All changes apply immediately in the demo.
+
+Riverside Market starts with a fictional $25,000 limit and $18,750 exposure. The sample in `sample-credit-increase.json` increases the limit to $40,000. `credit-increase.html?account=10004521` selects this customer without prefilling an approved action. Five fictional customer accounts are available.
+
+Credit data is isolated in browser-local storage under `abi-sap-credit-limits-v1`; existing sales documents are preserved. Amounts are stored as integer USD cents. Saves require Web Locks, reject duplicate approval references, and reject stale changes from another window. No actual SAP connection or cross-machine persistence is provided. The payload is an integration contract example; this page change does not configure the Wonderful webhook or computer-use agent.
+
+Tests cover direct save, invalid amounts, reload/display, history, duplicate references, concurrent changes, storage failures, and preservation of the existing sales-document flow.
+
 ## Transactions
 
+- `FD32`: separate customer credit limit increase screen.
 - `VA01`: credit memo request (CR), subsequent delivery free of charge (SDF), and returns order (RE).
 - `VA03`: display an existing document by document number or exact customer reference.
 - `ZCNOTE`: a **custom demo transaction** for a customer contact note.

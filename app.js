@@ -148,14 +148,17 @@ function startNew(action=draft.action) {
 }
 function executeCommand() {
   const code=document.querySelector('#command').value.trim().toUpperCase().replace(/^\/N/,'');
-  if(code==='VA01')startNew('credit');else if(code==='VA03')displayDialog();else if(code==='ZCNOTE')startNew('note');else setStatus(`Transaction ${code} is not available in this demonstration system.`,'error');
+  if(code==='FD32')openCreditManagement();else if(code==='VA01')startNew('credit');else if(code==='VA03')displayDialog();else if(code==='ZCNOTE')startNew('note');else setStatus(`Transaction ${code} is not available in this demonstration system.`,'error');
 }
 function showHelp() {
   showDialog('SAP — Application Help',`<p>This is a legacy SAP GUI-style demonstration for executing customer resolutions. Review and approval take place in the separate Wonderful Control Tower application.</p><p>Use <strong>Create with Reference</strong>, maintain the header and item data, enter the resolution on <strong>Header texts</strong>, then <strong>Save</strong>. Use <strong>Display Document</strong> to verify an existing document by number or customer reference.</p><table class="help-table"><thead><tr><th>Billing document</th><th>Sold-to party</th><th>Customer</th></tr></thead><tbody>${invoices.map(i=>`<tr><td>${i.invoice}</td><td>${i.account}</td><td>${esc(i.customer)}</td></tr>`).join('')}</tbody></table><p class="help-footnote" style="margin-top:15px">All data is fictional. Saved documents remain in this browser only. ZCNOTE is a custom demo transaction. The layout is inspired by legacy SAP GUI; it is not a verified copy of Anheuser-Busch's internal system.</p>`,`<button id="help-close">Close</button>`);
   document.querySelector('#help-close').onclick=()=>dialog.close();
 }
+function openCreditManagement() {
+  if(!dirty||displayed||confirm('Unsaved entries will be lost. Continue?'))location.href='credit-increase.html';
+}
 function openMenu(button) {
-  const menu=document.querySelector('#menu');const menus={document:[['New',()=>startNew()],['Save',()=>void saveDocument()],['Display',displayDialog]],edit:[['Check document',checkDocument],['Cancel entry',()=>startNew()]],goto:[['Item overview',()=>{capture();activeTab='items';render();}],['Header texts',()=>{capture();activeTab='texts';render();}],['Document flow',()=>{capture();activeTab='flow';render();}]],system:[['System information',showHelp]],help:[['Application help',showHelp]]};
+  const menu=document.querySelector('#menu');const menus={document:[['New',()=>startNew()],['Save',()=>void saveDocument()],['Display',displayDialog]],edit:[['Check document',checkDocument],['Cancel entry',()=>startNew()]],goto:[['Credit Line Increase (FD32)',openCreditManagement],['Item overview',()=>{capture();activeTab='items';render();}],['Header texts',()=>{capture();activeTab='texts';render();}],['Document flow',()=>{capture();activeTab='flow';render();}]],system:[['System information',showHelp]],help:[['Application help',showHelp]]};
   const items=menus[button.dataset.menu];menu.replaceChildren();for(const [label,action]of items){const item=document.createElement('button');item.setAttribute('role','menuitem');item.textContent=label;item.onclick=()=>{menu.hidden=true;action();};menu.append(item);}
   const rect=button.getBoundingClientRect();menu.style.left=`${rect.left+scrollX}px`;menu.style.top=`${rect.bottom+scrollY}px`;menu.hidden=false;
 }

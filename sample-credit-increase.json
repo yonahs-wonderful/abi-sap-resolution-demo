@@ -1,0 +1,15 @@
+{
+  "payload": {
+    "action": "credit_line_increase",
+    "approval_id": "ABI-CREDIT-APPROVAL-001",
+    "approved_by": "Demo Credit Manager",
+    "account": "10004521",
+    "customer_name": "Riverside Market",
+    "credit_control_area": "US01",
+    "currency": "USD",
+    "expected_current_limit": 25000,
+    "approved_new_limit": 40000,
+    "reason": "Approved increase to support higher seasonal order volume.",
+    "target_url": "https://yonahs-wonderful.github.io/abi-sap-resolution-demo/credit-increase.html?account=10004521"
+  }
+}
